@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QRコードスキャン & AR体験</title>
+  <!-- Instascan (QRコードスキャン用) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/instascan/1.0.0/instascan.min.js"></script>
+  <!-- A-Frame と AR.js (AR表示用) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/aframe/1.2.0/aframe.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ar.js/2.3.0/aframe-ar.js"></script>
+  <!-- 振動APIのポリフィル -->
+  <script src="https://cdn.jsdelivr.net/npm/vibration-api-polyfill@1.0.0/dist/vibrate.min.js"></script>
+  <style>
+    body { 
+      margin: 0; 
+      font-family: Arial, sans-serif; 
+      overflow: hidden;
+    }
+    /* QRコードスキャン用のコンテナ */
+    #scanner-container { 
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 10;
+      background-color: #000;
+      transition: opacity 0.3s ease;
+    }
+    #preview { 
+      width: 100%; 
+      height: 100%;
+      object-fit: cover;
+    }
+    /* スキャン範囲を示すガイド */
+    #scan-guide {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 250px;
+      height: 250px;
+      border: 2px solid rgba(255, 255, 255, 0.8);
+      border-radius: 10px;
+      box-shadow: 0 0 0 4000px rgba(0, 0, 0, 0.5);
+      z-index: 11;
+    }
+    #scan-guide::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 30px;
+      height: 30px;
+      border-top: 4px solid #3498db;
+      border-left: 4px solid #3498db;
+      border-radius: 5px 0 0 0;
+    }
+    #scan-guide::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      width: 30px;
+      height: 30px;
+      border-bottom: 4px solid #3498db;
+      border-right: 4px solid #3498db;
+      border-radius: 0 0 5px 0;
+    }
+    /* スキャンラインのアニメーション */
+    #scan-line {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 2px;
+      background-color: #3498db;
+      animation: scan 2s linear infinite;
+      z-index: 12;
+    }
+    @keyframes scan {
+      0% { top: 0; }
+      50% { top: 100%; }
+      100% { top: 0; }
+    }
+    #scan-message {
+      position: absolute;
+      top: 20px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      color: white;
+      background-color: rgba(0, 0, 0, 0.6);
+      padding: 10px;
+      font-size: 1.2rem;
+      z-index: 11;
+    }
+    #error-message {
+      position: absolute;
+      bottom: 20px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      color: white;
+      background-color: rgba(255, 0, 0, 0.7);
+      padding: 10px;
+      font-size: 1.2rem;
+      z-index: 11;
+      display: none;
+    }
+    /* AR表示用のコンテナ */
+    #ar-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 5;
+      display: none;
+    }
+    /* ローディングインジケーター */
+    #loading-indicator {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 80px;
+      height: 80px;
+      border: 8px solid rgba(255, 255, 255, 0.3);
+      border-radius: 50%;
+      border-top-color: #3498db;
+      animation: spin 1s linear infinite;
+      z-index: 15;
+      display: none;
+    }
+    @keyframes spin {
+      0% { transform: translate(-50%, -50%) rotate(0deg); }
+      100% { transform: translate(-50%, -50%) rotate(360deg); }
+    }
+    /* ローディングメッセージ */
+    #loading-message {
+      position: fixed;
+      top: calc(50% + 50px);
+      left: 0;
+      right: 0;
+      text-align: center;
+      color: white;
+      font-size: 1.2rem;
+      z-index: 15;
+      display: none;
+    }
+    /* コントロールボタン */
+    .control-button {
+      position: absolute;
+      z-index: 20;
+      background-color: rgba(0, 0, 0, 0.6);
+      color: white;
+      border: none;
+      border-radius: 50%;
+      width: 60px;
+      height: 60px;
+      font-size: 24px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background-color 0.3s;
+    }
+    .control-button:hover {
+      background-color: rgba(0, 0, 0, 0.8);
+    }
+    #back-button {
+      top: 20px;
+      left: 20px;
+      display: none;
+    }
+    #camera-switch {
+      bottom: 20px;
+      right: 20px;
+    }
+    #resolution-toggle {
+      bottom: 20px;
+      left: 20px;
+    }
+    /* アクセシビリティ情報 */
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    /* デバイスの向きに応じたスタイル */
+    @media (orientation: landscape) {
+      #scan-guide {
+        width: 200px;
+        height: 200px;
+      }
+      #scan-message {
+        top: 10px;
+        font-size: 1rem;
+      }
+      .control-button {
+        width: 50px;
+        height: 50px;
+      }
+    }
+    /* 高コントラストモード */
+    .high-contrast {
+      filter: contrast(1.5);
+    }
+    /* ネットワークエラー通知 */
+    #network-error {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background-color: rgba(0, 0, 0, 0.8);
+      color: white;
+      padding: 20px;
+      border-radius: 10px;
+      text-align: center;
+      z-index: 30;
+      display: none;
+    }
+    #network-error button {
+      margin-top: 10px;
+      padding: 8px 16px;
+      background-color: #3498db;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <!-- QRコードスキャン用エリア -->
+  <div id="scanner-container" role="region" aria-label="QRコードスキャナー">
+    <video id="preview" aria-hidden="true"></video>
+    <div id="scan-guide">
+      <div id="scan-line"></div>
+    </div>
+    <div id="scan-message" aria-live="polite">QRコードをスキャンしてください</div>
+    <div id="error-message" aria-live="assertive"></div>
+    <button id="camera-switch" class="control-button" aria-label="カメラを切り替える">
+      <span aria-hidden="true">📷</span>
+    </button>
+    <button id="resolution-toggle" class="control-button" aria-label="解像度を切り替える">
+      <span aria-hidden="true">🔍</span>
+    </button>
+    <button id="accessibility-toggle" class="control-button" style="top: 20px; right: 20px;" aria-label="高コントラストモードを切り替える">
+      <span aria-hidden="true">👁️</span>
+    </button>
+  </div>
+  
+  <!-- ローディングインジケーター -->
+  <div id="loading-indicator" aria-hidden="true"></div>
+  <div id="loading-message" aria-live="polite"></div>
+
+  <!-- ネットワークエラー通知 -->
+  <div id="network-error" role="alert">
+    <p>ネットワーク接続に問題が発生しました。</p>
+    <p>インターネット接続を確認してください。</p>
+    <button id="retry-button">再試行</button>
+  </div>
+
+  <!-- AR表示用エリア -->
+  <div id="ar-container" role="region" aria-label="AR体験">
+    <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false;" vr-mode-ui="enabled: false" renderer="antialias: true; alpha: true; precision: mediump;">
+      <a-entity id="ar-content"></a-entity>
+      <a-entity camera></a-entity>
+    </a-scene>
+    <button id="back-button" class="control-button" aria-label="スキャン画面に戻る">
+      <span aria-hidden="true">↩</span>
+    </button>
+  </div>
+
+  <script>
+    // 開発モードフラグ（本番環境では false に設定）
+    const DEV_MODE = true;
+    
+    // 許可されたドメインのホワイトリスト
+    const ALLOWED_DOMAINS = [
+      'example.com',
+      'yourdomain.com',
+      'ar-models.com'
+    ];
+
+    // DOM要素の取得
+    const scannerContainer = document.getElementById('scanner-container');
+    const previewElement = document.getElementById('preview');
+    const errorMessage = document.getElementById('error-message');
+    const loadingIndicator = document.getElementById('loading-indicator');
+    const loadingMessage = document.getElementById('loading-message');
+    const arContainer = document.getElementById('ar-container');
+    const scanMessage = document.getElementById('scan-message');
+    const backButton = document.getElementById('back-button');
+    const cameraSwitch = document.getElementById('camera-switch');
+    const resolutionToggle = document.getElementById('resolution-toggle');
+    const accessibilityToggle = document.getElementById('accessibility-toggle');
+    const networkError = document.getElementById('network-error');
+    const retryButton = document.getElementById('retry-button');
+    const arContent = document.getElementById('ar-content');
+    const arScene = document.querySelector('a-scene');
+
+    // 状態変数
+    let currentCamera = 0;
+    let availableCameras = [];
+    let isHighResolution = false;
+    let isHighContrast = false;
+    let scanner = null;
+    let lastScannedContent = null;
+    let arContentCache = {};
+
+    // デバッグモードの設定
+    if (DEV_MODE) {
+      arScene.setAttribute('arjs', 'sourceType: webcam; debugUIEnabled: true;');
+      console.log('デバッグモードが有効です');
+    }
+
+    // ユーティリティ関数
+    
+    // エラーメッセージ表示用関数（改善版）
+    function showError(msg, solution = '', duration = 5000) {
+      errorMessage.innerHTML = `<strong>${msg}</strong>${solution ? `<br>${solution}` : ''}`;
+      errorMessage.style.display = 'block';
+      
+      // アクセシビリティのためにARIAライブリージョンを更新
+      errorMessage.setAttribute('aria-hidden', 'false');
+      
+      if (duration > 0) {
+        setTimeout(() => {
+          errorMessage.style.display = 'none';
+          errorMessage.setAttribute('aria-hidden', 'true');
+        }, duration);
+      }
+      
+      if (DEV_MODE) {
+        console.error(msg);
+      }
+    }
+
+    // ローディング表示用関数
+    function showLoading(msg = 'ロード中...') {
+      loadingIndicator.style.display = 'block';
+      loadingMessage.textContent = msg;
+      loadingMessage.style.display = 'block';
+    }
+
+    // ローディング非表示用関数
+    function hideLoading() {
+      loadingIndicator.style.display = 'none';
+      loadingMessage.style.display = 'none';
+    }
+
+    // ネットワークエラー表示用関数
+    function showNetworkError() {
+      networkError.style.display = 'block';
+    }
+
+    // ネットワークエラー非表示用関数
+    function hideNetworkError() {
+      networkError.style.display = 'none';
+    }
+
+    // QRコードの内容を検証する関数
+    function validateQRContent(content) {
+      // URLかどうかをチェック
+      try {
+        const url = new URL(content);
+        
+        // ホワイトリストに含まれるドメインかチェック
+        const domain = url.hostname;
+        if (!ALLOWED_DOMAINS.some(allowedDomain => domain === allowedDomain || domain.endsWith('.' + allowedDomain))) {
+          return {
+            isValid: false,
+            reason: '許可されていないドメインです',
+            content: null
+          };
+        }
+        
+        return {
+          isValid: true,
+          reason: '',
+          content: content
+        };
+      } catch (e) {
+        // URLでない場合は、安全な文字列かどうかをチェック
+        // 潜在的に危険なコードを含んでいないか確認
+        if (content.includes('<script>') || content.includes('javascript:')) {
+          return {
+            isValid: false,
+            reason: '不正なコンテンツが含まれています',
+            content: null
+          };
+        }
+        
+        // 単純なテキストまたはJSONとして扱う
+        return {
+          isValid: true,
+          reason: '',
+          content: content
+        };
+      }
+    }
+
+    // ARコンテンツをロードする関数
+    async function loadARContent(content) {
+      showLoading('ARコンテンツをロード中...');
+      
+      try {
+        // キャッシュにあるか確認
+        if (arContentCache[content]) {
+          renderARContent(arContentCache[content]);
+          return;
+        }
+        
+        // コンテンツの種類に応じた処理
+        if (content.startsWith('http')) {
+          // URLの場合、モデルをロード
+          const modelUrl = content;
+          
+          // ネットワーク接続を確認
+          if (!navigator.onLine) {
+            throw new Error('ネットワーク接続がありません');
+          }
+          
+          // モデルをロード（例: GLTFモデル）
+          const entity = document.createElement('a-entity');
+          entity.setAttribute('gltf-model', modelUrl);
+          entity.setAttribute('position', '0 0 -1');
+          entity.setAttribute('rotation', '0 0 0');
+          entity.setAttribute('scale', '0.5 0.5 0.5');
+          
+          // キャッシュに保存
+          arContentCache[content] = entity;
+          
+          renderARContent(entity);
+        } else {
+          // テキストまたはJSONの場合
+          try {
+            // JSONとしてパース
+            const data = JSON.parse(content);
+            
+            // JSONの内容に応じたARコンテンツを生成
+            const entity = document.createElement('a-entity');
+            
+            if (data.type === 'text') {
+              // テキスト表示
+              entity.setAttribute('text', {
+                value: data.value,
+                color: data.color || '#FFF',
+                width: data.width || 2,
+                align: 'center'
+              });
+              entity.setAttribute('position', '0 0 -1');
+            } else if (data.type === 'model') {
+              // モデル表示
+              entity.setAttribute('gltf-model', data.url);
+              entity.setAttribute('position', data.position || '0 0 -1');
+              entity.setAttribute('rotation', data.rotation || '0 0 0');
+              entity.setAttribute('scale', data.scale || '0.5 0.5 0.5');
+            }
+            
+            // キャッシュに保存
+            arContentCache[content] = entity;
+            
+            renderARContent(entity);
+          } catch (e) {
+            // 単純なテキストとして表示
+            const entity = document.createElement('a-entity');
+            entity.setAttribute('text', {
+              value: content,
+              color: '#FFF',
+              width: 2,
+              align: 'center'
+            });
+            entity.setAttribute('position', '0 0 -1');
+            
+            // キャッシュに保存
+            arContentCache[content] = entity;
+            
+            renderARContent(entity);
+          }
+        }
+      } catch (error) {
+        console.error('ARコンテンツのロードエラー:', error);
+        
+        if (!navigator.onLine || error.message.includes('ネットワーク')) {
+          showNetworkError();
+        } else {
+          showError('ARコンテンツのロードに失敗しました', 'QRコードを再スキャンしてください');
+          // スキャン画面に戻る
+          setTimeout(() => {
+            goBackToScanner();
+          }, 3000);
+        }
+      } finally {
+        hideLoading();
+      }
+    }
+
+    // ARコンテンツをレンダリングする関数
+    function renderARContent(entity) {
+      // 既存のコンテンツをクリア
+      while (arContent.firstChild) {
+        arContent.removeChild(arContent.firstChild);
+      }
+      
+      // 新しいコンテンツを追加
+      arContent.appendChild(entity);
+      
+      // AR画面を表示
+      scannerContainer.style.opacity = 0;
+      setTimeout(() => {
+        scannerContainer.style.display = 'none';
+        arContainer.style.display = 'block';
+        backButton.style.display = 'flex';
+      }, 300);
+    }
+
+    // スキャン画面に戻る関数
+    function goBackToScanner() {
+      // AR画面を非表示
+      arContainer.style.display = 'none';
+      backButton.style.display = 'none';
+      
+      // スキャン画面を表示
+      scannerContainer.style.display = 'block';
+      setTimeout(() => {
+        scannerContainer.style.opacity = 1;
+      }, 10);
+      
+      // スキャナーを再開
+      startScanner();
+    }
+
+    // カメラを完全に停止する関数
+    function stopCamera() {
+      if (scanner) {
+        scanner.stop();
+        
+        // ビデオストリームも停止
+        const videoTracks = previewElement.srcObject?.getVideoTracks();
+        if (videoTracks && videoTracks.length > 0) {
+          videoTracks.forEach(track => track.stop());
+        }
+        previewElement.srcObject = null;
+      }
+    }
+
+    // スキャナーを開始する関数
+    function startScanner() {
+      // 既存のスキャナーがあれば停止
+      stopCamera();
+      
+      showLoading('カメラを起動中...');
+      
+      // スキャナーの設定
+      scanner = new Instascan.Scanner({
+        video: previewElement,
+        mirror: false,
+        backgroundScan: false,
+        scanPeriod: 3  // パフォーマンス向上のためスキャン間隔を調整
+      });
+      
+      // QRコードスキャン時の処理
+      scanner.addListener('scan', function(content) {
+        // 振動フィードバック（対応デバイスのみ）
+        if (navigator.vibrate) {
+          navigator.vibrate(200);
+        }
+        
+        // 音声フィードバック
+        const beep = new Audio('data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4LjI5LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAADwADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMD////AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAAABBTEFNRTMuMTAwA8MAAAAAAAAAABQgJAUXQQAB9AAAAcAhkZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//sQZAAP8AAAaQAAAAgAAA0gAAABAAABpAAAACAAADSAAAAETEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVU=');
+        beep.play();
+        
+        // QRコードの内容を検証
+        const validationResult = validateQRContent(content);
+        
+        if (!validationResult.isValid) {
+          showError('無効なQRコードです', validationResult.reason);
+          return;
+        }
+        
+        // 同じQRコードの連続スキャンを防止
+        if (lastScannedContent === validationResult.content) {
+          return;
+        }
+        lastScannedContent = validationResult.content;
+        
+        if (DEV_MODE) {
+          console.log("QRコードの内容:", validationResult.content);
+        }
+        
+        // スキャナーを停止
+        stopCamera();
+        
+        // ARコンテンツをロード
+        loadARContent(validationResult.content);
+      });
+      
+      // カメラを選択して開始
+      selectAndStartCamera();
+    }
+
+    // カメラを選択して開始する関数
+    function selectAndStartCamera() {
+      Instascan.Camera.getCameras().then(function(cameras) {
+        availableCameras = cameras;
+        
+        if (cameras.length === 0) {
+          showError('カメラが見つかりません', 'デバイスにカメラが接続されているか確認してください');
+          hideLoading();
+          return;
+        }
+        
+        // 適切なカメラを選択
+        let selectedCamera = cameras[currentCamera % cameras.length];
+        
+        // バックカメラを優先的に選択（初回のみ）
+        if (currentCamera === 0) {
+          // バックカメラの検出方法を強化
+          const backCameraKeywords = ['back', 'rear', 'environment', '後面', 'バック', '背面'];
+          
+          for (let i = 0; i < cameras.length; i++) {
+            const camera = cameras[i];
+            
+            // カメラ名またはラベルでバックカメラを検出
+            if (camera.name && backCameraKeywords.some(keyword => camera.name.toLowerCase().includes(keyword))) {
+              selectedCamera = camera;
+              currentCamera = i;
+              break;
+            }
+            
+            // facingMode が environment ならバックカメラ
+            if (camera.facingMode === 'environment') {
+              selectedCamera = camera;
+              currentCamera = i;
+              break;
+            }
+          }
+        }
+        
+        // カメラを開始
+        scanner.start(selectedCamera).then(() => {
+          hideLoading();
+          scanMessage.textContent = 'QRコードをスキャンしてください';
+        }).catch(function(error) {
+          console.error("カメラの開始エラー:", error);
+          
+          if (error.name === 'NotAllowedError') {
+            showError('カメラへのアクセスが拒否されました', 'ブラウザの設定でカメラへのアクセスを許可してください', 0);
+          } else if (error.name === 'NotFoundError') {
+            showError('カメラが見つかりません', 'デバイスにカメラが接続されているか確認してください');
+          } else {
+            showError('カメラの起動に失敗しました', 'ページを再読み込みしてください: ' + error.message);
+          }
+          
+          hideLoading();
+        });
+      }).catch(function(e) {
+        console.error('カメラアクセスエラー:', e);
+        showError('カメラへのアクセスに失敗しました', 'ブラウザの設定でカメラへのアクセスを許可してください', 0);
+        hideLoading();
+      });
+    }
+
+    // カメラを切り替える関数
+    function switchCamera() {
+      if (availableCameras.length <= 1) {
+        showError('切り替え可能なカメラがありません');
+        return;
+      }
+      
+      currentCamera = (currentCamera + 1) % availableCameras.length;
+      showLoading('カメラを切り替え中...');
+      
+      // カメラを再起動
+      selectAndStartCamera();
+    }
+
+    // 解像度を切り替える関数
+    function toggleResolution() {
+      isHighResolution = !isHighResolution;
+      
+      if (scanner) {
+        // スキャナーの設定を更新
+        scanner.stop();
+        
+        if (isHighResolution) {
+          scanner = new Instascan.Scanner({
+            video: previewElement,
+            mirror: false,
+            backgroundScan: false,
+            scanPeriod: 5,  // 高解像度では処理が重くなるため間隔を長く
+            resolution: 1080  // 高解像度
+          });
+          showError('高解像度モードに切り替えました', '', 2000);
+        } else {
+          scanner = new Instascan.Scanner({
+            video: previewElement,
+            mirror: false,
+            backgroundScan: false,
+            scanPeriod: 3,
+            resolution: 480  // 標準解像度
+          });
+          showError('標準解像度モードに切り替えました', '', 2000);
+        }
+        
+        // イベントリスナーを再設定
+        scanner.addListener('scan', function(content) {
+          // 振動フィードバック
+          if (navigator.vibrate) {
+            navigator.vibrate(200);
+          }
+          
+          // 音声フィードバック
+          const beep = new Audio('data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4LjI5LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAADwADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMD////AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAAABBTEFNRTMuMTAwA8MAAAAAAAAAABQgJAUXQQAB9AAAAcAhkZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//sQZAAP8AAAaQAAAAgAAA0gAAABAAABpAAAACAAADSAAAAETEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVU=');
+          beep.play();
+          
+          // QRコードの内容を検証
+          const validationResult = validateQRContent(content);
+          
+          if (!validationResult.isValid) {
+            showError('無効なQRコードです', validationResult.reason);
+            return;
+          }
+          
+          // 同じQRコードの連続スキャンを防止
+          if (lastScannedContent === validationResult.content) {
+            return;
+          }
+          lastScannedContent = validationResult.content;
+          
+          if (DEV_MODE) {
+            console.log("QRコードの内容:", validationResult.content);
+          }
+          
+          // スキャナーを停止
+          stopCamera();
+          
+          // ARコンテンツをロード
+          loadARContent(validationResult.content);
+        });
+        
+        // カメラを再起動
+        selectAndStartCamera();
+      }
+    }
+
+    // 高コントラストモードを切り替える関数
+    function toggleHighContrast() {
+      isHighContrast = !isHighContrast;
+      
+      if (isHighContrast) {
+        document.body.classList.add('high-contrast');
+        showError('高コントラストモードを有効にしました', '', 2000);
+      } else {
+        document.body.classList.remove('high-contrast');
+        showError('高コントラストモードを無効にしました', '', 2000);
+      }
+    }
+
+    // デバイスの向きの変更を検出
+    window.addEventListener('orientationchange', function() {
+      // レイアウトを調整
+      setTimeout(() => {
+        // ARシーンのサイズを更新
+        if (arScene) {
+          arScene.resize();
+        }
+      }, 300);
+    });
+
+    // オフライン状態の検出
+    window.addEventListener('offline', function() {
+      showError('インターネット接続が切断されました', 'ネットワーク接続を確認してください');
+    });
+
+    // オンライン状態の検出
+    window.addEventListener('online', function() {
+      showError('インターネット接続が復旧しました', '', 2000);
+    });
+
+    // イベントリスナーの設定
+    backButton.addEventListener('click', goBackToScanner);
+    cameraSwitch.addEventListener('click', switchCamera);
+    resolutionToggle.addEventListener('click', toggleResolution);
+    accessibilityToggle.addEventListener('click', toggleHighContrast);
+    retryButton.addEventListener('click', function() {
+      hideNetworkError();
+      loadARContent(lastScannedContent);
+    });
+
+    // キーボードアクセシビリティのサポート
+    document.addEventListener('keydown', function(e) {
+      // Escキーでスキャン画面に戻る
+      if (e.key === 'Escape' && arContainer.style.display === 'block') {
+        goBackToScanner();
+      }
+      
+      // スペースキーでカメラ切り替え
+      if (e.key === ' ' && scannerContainer.style.display !== 'none') {
+        switchCamera();
+      }
+    });
+
+    // 初期化
+    window.addEventListener('load', function() {
+      // スキャナーを開始
+      startScanner();
+      
+      // サービスワーカーの登録（オフラインサポート）
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('service-worker.js').then(function(registration) {
+          if (DEV_MODE) {
+            console.log('ServiceWorker登録成功:', registration.scope);
+          }
+        }).catch(function(error) {
+          console.error('ServiceWorker登録失敗:', error);
+        });
+      }
+    });
+  </script>
+</body>
+</html>
